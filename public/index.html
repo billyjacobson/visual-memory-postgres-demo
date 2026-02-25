@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Living Memory: The Adaptive AI Cortex</title>
+    <!-- Use modern Inter font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <!-- Unpkg for 3d-force-graph library -->
+    <script src="https://unpkg.com/3d-force-graph"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- LEFT HALF: Chat Experience -->
+        <main class="chat-container">
+            <header class="chat-header">
+                <h1>Living Memory</h1>
+                <p>Cloud SQL & Gemini AI Cortex</p>
+            </header>
+            
+            <div id="chat-window" class="chat-window">
+                <div class="message ai-message">
+                    👋 Hello! I'm Sam. I remember everything we talk about to better assist you. What's on your mind?
+                </div>
+            </div>
+
+            <form id="chat-form" class="chat-form">
+                <input type="text" id="chat-input" placeholder="Type a message..." autocomplete="off" required />
+                <button type="submit">
+                    Send
+                </button>
+            </form>
+        </main>
+
+        <!-- RIGHT HALF: 3D Brain Galaxy Data Viz -->
+        <aside class="brain-container">
+            <div class="brain-overlay">
+                <h2>AI Cortex Data Visualizer</h2>
+                <div class="legend">
+                    <span class="legend-item"><span class="color-dot bg-blue"></span> Explicit Fact</span>
+                    <span class="legend-item"><span class="color-dot bg-pink"></span> Expected Preference</span>
+                    <span class="legend-item"><span class="color-dot bg-gold"></span> Implicit Trait</span>
+                </div>
+            </div>
+            <div id="graph-3d"></div>
+        </aside>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
