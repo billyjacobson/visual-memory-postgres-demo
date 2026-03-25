@@ -1,0 +1,45 @@
+[dotenv@17.3.1] injecting env (6) from .env -- tip: ⚙️  override existing env vars with { override: true }
+Living Memory Demo Backend listening at http://localhost:3000
+Saved new memory: The user loves ramen.
+Saved new memory: User is uncertain or indecisive.
+Saved new memory: User loves pizza.
+Saved new memory: User sometimes goes to f&f.
+Saved new memory: User wants to try a new place.
+Saved new memory: User is interested in places located in Park Slope.
+Saved new memory: User is open to receiving recommendations.
+Saved new memory: The user's current intent or subject of interest is pizza.
+Saved new memory: The user has a tendency to self-correct or clarify previous statements.
+Saved new memory: The user exhibits a casual and informal communication style.
+Saved new memory: My name is Evan Ross Katz.
+Saved new memory: I am a senior fashion reporter.
+Saved new memory: I am active on Instagram and in journalism.
+Saved new memory: I am hosting a podcast and a TV show.
+Saved new memory: User is trying to plan a weekend getaway.
+Saved new memory: User prefers weekend getaways.
+Saved new memory: The trip is for user's anniversary.
+Saved new memory: The anniversary/trip is next month.
+Saved new memory: User values commemorating special occasions.
+Saved new memory: The user is asking for a recommendation on a destination.
+Saved new memory: The user is planning an activity involving themselves and at least one other person.
+Saved new memory: The user is open to various suggestions due to the lack of specific criteria.
+Saved new memory: I really like React and declarative UI frameworks.
+Saved new memory: The user expects the AI to maintain a memory of their personal preferences, specifically regarding dietary likes.
+Saved new memory: The user is inquiring about their own dietary preferences.
+Saved new memory: The user prefers information to be presented in a bulleted list format.
+Saved new memory: The user prefers to receive 3 items when requesting a list of their hobbies.
+Saved new memory: The user expects the system to retrieve information from its memory.
+Saved new memory: User prefers output in a bulleted list format.
+Saved new memory: User wants to retrieve 3 of their hobbies.
+Saved new memory: User expects the system to utilize their stored memory profile for information retrieval.
+Saved new memory: I like hiking.
+Saved new memory: I like cars.
+Saved new memory: I like traveling.
+Saved new memory: The user considers hiking, cars, and traveling as hobbies.
+Saved new memory: The user prefers a bulleted list format for information.
+Saved new memory: The user is polite (uses 'please').
+Saved new memory: I like hiking
+Saved new memory: I like cars
+Saved new memory: I like traveling
+Saved new memory: The user prefers information to be presented in a bulleted list format.
+Saved new memory: The user has hobbies.
+Saved new memory: The user expects the AI to maintain a memory profile that includes their personal hobbies.

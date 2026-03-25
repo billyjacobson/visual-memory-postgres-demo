@@ -4,25 +4,38 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Living Memory: The Adaptive AI Cortex</title>
-    <!-- Use modern Inter font -->
+    <!-- Use modern fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
-    <!-- Unpkg for 3d-force-graph library -->
-    <script src="https://unpkg.com/3d-force-graph"></script>
+    <!-- Libraries for physics and rendering -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://unpkg.com/force-graph"></script>
 </head>
 <body>
     <div class="app-container">
         <!-- LEFT HALF: Chat Experience -->
         <main class="chat-container">
             <header class="chat-header">
-                <h1>Living Memory</h1>
-                <p>Cloud SQL & Gemini AI Cortex</p>
+                <div class="header-title">
+                    <h1>Living Memory</h1>
+                    <p>Cloud SQL & Gemini AI Cortex</p>
+                </div>
+                <div class="header-controls">
+                    <select id="user-select">
+                        <option value="">Loading Users...</option>
+                    </select>
+                    <button id="create-user-btn" class="secondary-btn">+ User</button>
+                    <select id="conversation-select">
+                        <option value="">New Conversation</option>
+                    </select>
+                    <button id="new-chat-btn" class="secondary-btn">+ Chat</button>
+                </div>
             </header>
             
             <div id="chat-window" class="chat-window">
-                <div class="message ai-message">
-                    👋 Hello! I'm Sam. I remember everything we talk about to better assist you. What's on your mind?
-                </div>
+                <!-- Messages will be injected here -->
             </div>
 
             <form id="chat-form" class="chat-form">
@@ -45,6 +58,21 @@
             </div>
             <div id="graph-3d"></div>
         </aside>
+    </div>
+
+    <div id="user-modal"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center;">
+        <div
+            style="background: var(--bg-dark); padding: 2rem; border-radius: 12px; border: 1px solid var(--color-fact); text-align: center; width: 300px;">
+            <h3 style="margin-top: 0; margin-bottom: 1rem; color: white;">New User Persona</h3>
+            <input type="text" id="new-user-input" placeholder="Enter name..."
+                style="padding: 0.8rem; width: 100%; margin-bottom: 1.5rem; border-radius: 8px; border: none; background: rgba(255,255,255,0.1); color: white; outline: none;" />
+            <div style="display: flex; gap: 1rem; justify-content: center;">
+                <button id="cancel-user-btn" class="secondary-btn" style="flex: 1;">Cancel</button>
+                <button id="submit-user-btn" class="secondary-btn"
+                    style="flex: 1; background: var(--color-fact); color: #000; font-weight: bold;">Create</button>
+            </div>
+        </div>
     </div>
 
     <script src="app.js"></script>

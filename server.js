@@ -75,8 +75,12 @@ app.post('/api/chat', async (req, res) => {
       [userId, message, embeddingStr]
     );
 
+    // Get user's persona name for the prompt
+    const userResult = await pool.query(`SELECT persona_name FROM users WHERE id = $1`, [userId]);
+    const personaName = userResult.rows[0]?.persona_name || 'User';
+
     // Format context for prompt
-    let memoryContext = "You are Sam's personal assistant. Use the following facts to respond gracefully, but do not announce that you are reading from a memory bank. Just act naturally.\n\nMemories:\n";
+    let memoryContext = `You are ${personaName}'s personal assistant. Use the following facts to respond gracefully, but do not announce that you are reading from a memory bank. Just act naturally.\n\nMemories:\n`;
     relevantMemories.rows.forEach(m => {
       memoryContext += `- ${m.content} (Type: ${m.memory_type}, Category: ${m.category})\n`;
     });
@@ -156,7 +160,7 @@ async function extractMemoriesAsync(userMessage, userId, messageId) {
   }
 }
 
-// 2. FETCH ALL MEMORIES ENDPOINT (For the 3D Visualization)
+// 2. FETCH ALL MEMORIES ENDPOINT (For the 2D Visualization)
 app.get('/api/memories', async (req, res) => {
   try {
     const { userId } = req.query;
@@ -165,44 +169,60 @@ app.get('/api/memories', async (req, res) => {
     // Fetch all memories for the user
     const result = await pool.query(
       `SELECT id, content, memory_type, category, embedding::text as vector 
-             FROM memories WHERE user_id = $1`, [userId]
+             FROM memories WHERE user_id = $1 ORDER BY id`, [userId]
     );
 
-    const nodes = result.rows.map(row => ({
-      id: row.id,
-      name: row.content,
-      type: row.memory_type,
-      category: row.category,
-      // Keep the raw embedding to compute mock distances for clustering in UI if needed
-      val: JSON.parse(row.vector)
-    }));
+    const allFacts = result.rows;
+    const uniqueEdges = {};
+    const nodeConnectionCount = {};
+    allFacts.forEach(row => {
+      nodeConnectionCount[row.id] = 0;
+    });
 
-    // We could dynamically compute distance edges in SQL, but to keep the tutorial simple, 
-    // we'll pass the embeddings to the front end which handles spatial clustering via force-graph physics.
-    // Or we can build some loose links server-side.
-    const links = [];
+    // Query for similar facts using PGVector
+    for (const row of allFacts) {
+      const neighborsQuery = await pool.query(`
+        SELECT id, 1 - (embedding <=> $1) as similarity
+        FROM memories
+        WHERE id != $2 AND user_id = $3
+        ORDER BY embedding <=> $1 ASC
+        LIMIT 6
+      `, [row.vector, row.id, userId]);
 
-    // Simple threshold clustering: link nodes that are semantically very similar
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const similarity = cosineSimilarity(nodes[i].val, nodes[j].val);
-        if (similarity > 0.82) { // Cosine similarity threshold for displaying a line
-          links.push({
-            source: nodes[i].id,
-            target: nodes[j].id,
-            value: similarity
-          });
+      for (const neighbor of neighborsQuery.rows) {
+        if (neighbor.similarity > 0.70) {
+          // Sort IDs so a->b and b->a are the same edge key
+          const edgeKeyPair = [row.id, neighbor.id].sort((a, b) => a - b).join('-');
+
+          if (!uniqueEdges[edgeKeyPair]) {
+            const thickness = Math.pow(neighbor.similarity, 3) * 50;
+            uniqueEdges[edgeKeyPair] = {
+              source: row.id,
+              target: neighbor.id,
+              value: thickness,
+              similarity: neighbor.similarity
+            };
+            nodeConnectionCount[row.id] += 1;
+            nodeConnectionCount[neighbor.id] += 1;
+          }
         }
       }
     }
 
-    // We don't actually need to send the massive vector arrays to the frontend once links are computed
-    const cleanedNodes = nodes.map(n => {
-      delete n.val;
-      return n;
+    const links = Object.values(uniqueEdges);
+
+    const nodes = allFacts.map(row => {
+      const count = nodeConnectionCount[row.id] || 0;
+      return {
+        id: row.id,
+        name: row.content,
+        type: row.memory_type,
+        category: row.category,
+        size: 10 + (count * 4) // dynamic sizing based on connections
+      };
     });
 
-    res.json({ nodes: cleanedNodes, links });
+    res.json({ nodes, links });
   } catch (err) {
     console.error("Error fetching memories:", err);
     res.status(500).json({ error: "Failed to fetch memories" });
@@ -222,6 +242,141 @@ function cosineSimilarity(A, B) {
   if (normA === 0 || normB === 0) return 0;
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
+
+// CREATE A NEW USER
+app.post('/api/users', async (req, res) => {
+  try {
+    const { persona_name } = req.body;
+    if (!persona_name) return res.status(400).json({ error: "Missing persona_name" });
+
+    const result = await pool.query(
+      `INSERT INTO users (persona_name) VALUES ($1) RETURNING *`,
+      [persona_name]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Error creating user:", err);
+    res.status(500).json({ error: "Failed to create user" });
+  }
+});
+
+// FETCH ALL USERS
+app.get('/api/users', async (req, res) => {
+  try {
+    const result = await pool.query(`SELECT * FROM users ORDER BY created_at DESC`);
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Error fetching users:", err);
+    res.status(500).json({ error: "Failed to fetch users" });
+  }
+});
+
+// FETCH CONVERSATIONS FOR USER
+app.get('/api/conversations/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const result = await pool.query(
+      `SELECT * FROM conversations WHERE user_id = $1 ORDER BY started_at DESC`,
+      [userId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Error fetching conversations:", err);
+    res.status(500).json({ error: "Failed to fetch conversations" });
+  }
+});
+
+// FETCH MESSAGES FOR CONVERSATION
+app.get('/api/messages/:conversationId', async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const result = await pool.query(
+      `SELECT * FROM messages WHERE conversation_id = $1 ORDER BY created_at ASC`,
+      [conversationId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Error fetching messages:", err);
+    res.status(500).json({ error: "Failed to fetch messages" });
+  }
+});
+
+// SEED DEMO USER & MEMORIES
+app.post('/api/seed', async (req, res) => {
+  try {
+    // 1. Create Demo User
+    const userResult = await pool.query(
+      `INSERT INTO users (persona_name) VALUES ('Demo User') RETURNING id`
+    );
+    const userId = userResult.rows[0].id;
+
+    // 2. Create Initial Conversation
+    const convResult = await pool.query(
+      `INSERT INTO conversations (user_id) VALUES ($1) RETURNING id`,
+      [userId]
+    );
+    const conversationId = convResult.rows[0].id;
+
+    // 3. Example Memories to Seed
+    const seedMemories = [
+      { content: "User works as a software engineer at a startup.", type: "FACT", category: "Career" },
+      { content: "User prefers dark mode for all their applications.", type: "PREF", category: "General" },
+      { content: "User speaks enthusiastically about artificial intelligence.", type: "IMPLICIT", category: "Persona" },
+      { content: "User drinks 3 cups of coffee every morning.", type: "FACT", category: "Habit" },
+      { content: "User enjoys hiking in the Pacific Northwest.", type: "FACT", category: "Hobby" },
+      { content: "User dislikes crowded tourist traps.", type: "PREF", category: "Travel" },
+      { content: "User writes concise, action-oriented messages.", type: "IMPLICIT", category: "Communication" },
+      { content: "User owns a 3-year-old golden retriever named Max.", type: "FACT", category: "Pets" },
+      { content: "User wants to learn Rust programming in the next 6 months.", type: "PREF", category: "Learning" },
+      { content: "User uses highly technical vocabulary casually.", type: "IMPLICIT", category: "Communication" },
+      { content: "User is allergic to peanuts.", type: "FACT", category: "Health" },
+      { content: "User prefers MacOS over Windows.", type: "PREF", category: "Technology" },
+      { content: "User tends to ask follow-up questions.", type: "IMPLICIT", category: "Persona" },
+      { content: "User visited Japan twice in 2023.", type: "FACT", category: "Travel" },
+      { content: "User loves authentic ramen but hates sushi.", type: "PREF", category: "Food" },
+      { content: "User values efficiency and quick responses.", type: "IMPLICIT", category: "Persona" },
+      { content: "User plays electric guitar.", type: "FACT", category: "Hobby" },
+      { content: "User mostly listens to classic rock and synthwave.", type: "PREF", category: "Music" },
+      { content: "User exhibits a dry sense of humor.", type: "IMPLICIT", category: "Persona" },
+      { content: "User bought a new home in Seattle last year.", type: "FACT", category: "Life" },
+      { content: "User avoids taking morning meetings when possible.", type: "PREF", category: "Career" },
+      { content: "User frequently expresses gratitude.", type: "IMPLICIT", category: "Behavior" },
+      { content: "User ran a half-marathon in under 2 hours.", type: "FACT", category: "Health" },
+      { content: "User prefers sci-fi over fantasy books.", type: "PREF", category: "Entertainment" },
+      { content: "User tends to be skeptical of marketing claims.", type: "IMPLICIT", category: "Persona" },
+    ];
+
+    // Create a dummy message to tie the memories to
+    const msgResult = await pool.query(
+      `INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3) RETURNING id`,
+      [conversationId, 'user', "Hello, I am the demo user."]
+    );
+    const messageId = msgResult.rows[0].id;
+
+    // 4. Compute embeddings and insert them into DB
+    const insertPromises = seedMemories.map(async (memory) => {
+      const embedRes = await ai.models.embedContent({
+        model: 'gemini-embedding-001',
+        contents: memory.content,
+        config: { outputDimensionality: 768 },
+      });
+      const vectorData = `[${embedRes.embeddings[0].values.join(',')}]`;
+
+      return pool.query(
+        `INSERT INTO memories (user_id, content, memory_type, category, embedding, source_message_id)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [userId, memory.content, memory.type.toUpperCase(), memory.category, vectorData, messageId]
+      );
+    });
+
+    await Promise.all(insertPromises);
+
+    res.json({ message: "Seed successful", userId, conversationId, memoryCount: seedMemories.length });
+  } catch (err) {
+    console.error("Error during seed:", err);
+    res.status(500).json({ error: "Seed failed" });
+  }
+});
 
 app.listen(port, () => {
   console.log(`Living Memory Demo Backend listening at http://localhost:${port}`);

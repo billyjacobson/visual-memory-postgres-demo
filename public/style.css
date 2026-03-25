@@ -45,22 +45,59 @@ body {
 
 .chat-header {
     margin-bottom: 2rem;
+    display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
 }
 
-.chat-header h1 {
+.header-title h1 {
     font-size: 1.8rem;
     font-weight: 600;
     background: -webkit-linear-gradient(45deg, #38bdf8, #f472b6);
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
-.chat-header p {
+.header-title p {
     color: var(--text-secondary);
     font-size: 0.9rem;
     margin-top: 0.2rem;
 }
 
+.header-controls {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.header-controls select {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    padding: 0.4rem 0.8rem;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 0.85rem;
+    outline: none;
+    cursor: pointer;
+}
+
+.secondary-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    padding: 0.4rem 0.8rem;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.secondary-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
 .chat-window {
     flex: 1;
     overflow-y: auto;
@@ -112,11 +149,42 @@ body {
     transition: all 0.5s ease;
 }
 
+.message.has-context {
+    transition: box-shadow 0.2s, border-color 0.2s;
+}
+
+.message.has-context:hover {
+    border-color: var(--color-pref);
+    box-shadow: 0 0 10px rgba(244, 114, 182, 0.2);
+}
 .message.has-context:hover .context-hit {
     opacity: 1;
     transform: translateY(0);
 }
 
+/* Markdown Styling within Messages */
+.message p {
+    margin-bottom: 0.8rem;
+}
+
+.message p:last-child {
+    margin-bottom: 0;
+}
+
+.message ul,
+.message ol {
+    margin-left: 1.5rem;
+    margin-bottom: 0.8rem;
+}
+
+.message li {
+    margin-bottom: 0.3rem;
+}
+
+.message strong {
+    color: #fff;
+    font-weight: 600;
+}
 .chat-form {
     display: flex;
     gap: 1rem;
@@ -224,4 +292,41 @@ body {
     0% { filter: drop-shadow(0 0 5px var(--color-implicit)); }
     50% { filter: drop-shadow(0 0 15px var(--color-implicit)) scale(1.1); }
     100% { filter: drop-shadow(0 0 5px var(--color-implicit)); }
+}
+
+/* Typing Indicator Animation */
+.typing-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 16px;
+}
+
+.typing-dot {
+    width: 6px;
+    height: 6px;
+    background-color: var(--text-secondary);
+    border-radius: 50%;
+    animation: typing 1.4s infinite ease-in-out both;
+}
+
+.typing-dot:nth-child(1) {
+    animation-delay: -0.32s;
+}
+
+.typing-dot:nth-child(2) {
+    animation-delay: -0.16s;
+}
+
+@keyframes typing {
+
+    0%,
+    80%,
+    100% {
+        transform: scale(0);
+    }
+
+    40% {
+        transform: scale(1);
+    }
 }
