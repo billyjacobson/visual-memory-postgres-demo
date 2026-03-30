@@ -126,4 +126,11 @@ SELECT category, count(*) FROM memories GROUP BY category ORDER BY count(*) DESC
 
 ---
 
+
+## Debugging issues
+
+Cloud Shell typing doesn't show text anymore. Run `stty sane` to fix it.
+
+Failed to start the Cloud SQL Proxy: Port already in use. Run `fuser -k 9470/tcp` to kill the process.
+
 Happy Coding! 🎉
