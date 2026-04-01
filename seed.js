@@ -10,7 +10,7 @@ const pool = new Pool({
   database: process.env.DB_NAME,
 });
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const ai = new GoogleGenAI({ vertexai: true, });
 
 const demoUsers = [
   {

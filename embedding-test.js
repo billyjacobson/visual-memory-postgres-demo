@@ -2,7 +2,7 @@ const { GoogleGenAI } = require('@google/genai');
 require('dotenv').config();
 
 async function main() {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const ai = new GoogleGenAI({ vertexai: true, });
 
   console.log("Connected to Gemini API");
 

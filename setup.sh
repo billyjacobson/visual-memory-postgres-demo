@@ -3,7 +3,7 @@
 # Configuration Variables
 PROJECT_ID=$(gcloud config get-value project)
 REGION="us-central1"
-INSTANCE_NAME="living-memory-db2"
+INSTANCE_NAME="living-memory-db"
 DB_NAME="living_memory"
 DB_USER="memory_app"
 DB_PASS="memory_app_password" 

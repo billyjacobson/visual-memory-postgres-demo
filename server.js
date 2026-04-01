@@ -18,8 +18,7 @@ const pool = new Pool({
   database: process.env.DB_NAME,
 });
 
-// Configure new Gemini API SDK
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const ai = new GoogleGenAI({ vertexai: true, });
 
 // Helper: Ensure we have a user and conversation ID
 async function ensureUserSession(req) {
