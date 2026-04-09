@@ -1,6 +1,7 @@
 const express = require('express');
 const { Pool } = require('pg');
 const { GoogleGenAI } = require('@google/genai');
+const { exec } = require('child_process');
 require('dotenv').config();
 
 const app = express();
@@ -18,7 +19,11 @@ const pool = new Pool({
   database: process.env.DB_NAME,
 });
 
-const ai = new GoogleGenAI({ vertexai: true, });
+const ai = new GoogleGenAI({
+  vertexai: true,
+  project: process.env.PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT,
+  location: process.env.REGION || 'us-central1'
+});
 
 // Helper: Ensure we have a user and conversation ID
 async function ensureUserSession(req) {
@@ -40,6 +45,15 @@ app.post('/api/chat', async (req, res) => {
     const { message } = req.body;
     const { userId, conversationId } = await ensureUserSession(req);
 
+    // Fetch last AI message for context in extraction
+    const lastAiMsgResult = await pool.query(
+      `SELECT content FROM messages 
+       WHERE conversation_id = $1 AND role = 'ai' 
+       ORDER BY id DESC LIMIT 1`,
+      [conversationId]
+    );
+    const lastAiMessage = lastAiMsgResult.rows[0]?.content || null;
+
     // Save User Message
     const userMsgResult = await pool.query(
       `INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3) RETURNING id`,
@@ -58,13 +72,13 @@ app.post('/api/chat', async (req, res) => {
     // Format embedding as pgvector string: '[x, y, z...]'
     const embeddingStr = `[${promptEmbedding.join(',')}]`;
 
-    // Query DB for top 5 closest memories
+    // Query DB for memories within a threshold (similarity > 0.3) with a max limit of 20
     const relevantMemories = await pool.query(
       `SELECT id, content, memory_type, category 
        FROM memories 
-       WHERE user_id = $1 
+       WHERE user_id = $1 AND 1 - (embedding <=> $2::vector) > 0.3
        ORDER BY embedding <=> $2::vector 
-       LIMIT 5`,
+       LIMIT 20`,
       [userId, embeddingStr]
     );
 
@@ -78,18 +92,69 @@ app.post('/api/chat', async (req, res) => {
     const userResult = await pool.query(`SELECT persona_name FROM users WHERE id = $1`, [userId]);
     const personaName = userResult.rows[0]?.persona_name || 'User';
 
-    // Format context for prompt
-    let memoryContext = `You are ${personaName}'s personal assistant. Use the following facts to respond gracefully, but do not announce that you are reading from a memory bank. Just act naturally.\n\nMemories:\n`;
+    // Fetch all messages for context (excluding the one we just saved!)
+    const historyResult = await pool.query(
+      `SELECT role, content FROM messages 
+       WHERE conversation_id = $1 AND id < $2
+       ORDER BY id DESC`,
+      [conversationId, userMessageId]
+    );
+
+    // Reverse to get chronological order
+    const history = historyResult.rows.reverse();
+
+    // Construct history array for Chats SDK
+    const historyArray = [];
+
+    // Add history turns
+    history.forEach(msg => {
+      historyArray.push({
+        role: msg.role === 'user' ? 'user' : 'model',
+        parts: [{ text: msg.content }]
+      });
+    });
+
+    // Format memory context and instructions
+    let memoryContext = `You are ${personaName}'s personal assistant. Use the following facts to respond gracefully. When using a memory to make a recommendation or answer, explicitly reference it (e.g., "Since you like gardening..." or "I know you are an engineer..."). Do not say "based on my memory bank", just state what you know about the user naturally.\n\nMemories:\n`;
     relevantMemories.rows.forEach(m => {
       memoryContext += `- ${m.content} (Type: ${m.memory_type}, Category: ${m.category})\n`;
     });
 
-    const prompt = `${memoryContext}\nUser Prompt: ${message}`;
+    const systemInstruction = memoryContext + `
+You are a proactive personal assistant with a "how can I help" mentality. Your goal is to actively solve problems and offer solutions without being asked for every step.
 
-    // Call Gemini for the Chat response
-    const chatResult = await ai.models.generateContent({
+Key Behaviors:
+1. **Offer Alternatives Immediately**: If the user indicates they have already seen, read, or done something you suggested (e.g., "I've read that one"), IMMEDIATELY offer 2-3 alternatives. Do not wait for them to ask for more.
+2. **Act on Feedback**: If the user gives feedback on your output (e.g., "that's too formal", "make it shorter", "try again"), IMMEDIATELY generate a new version that incorporates the feedback. Do not just acknowledge the feedback or ask what to do.
+3. **Be Proactive**: Don't just answer questions passively. Ask follow-up questions, suggest next steps, and use the user's memories to personalize the experience and anticipate their needs.
+4. **Explicitly Reference Memories**: When drawing on the user's memories to make suggestions or provide answers, explicitly state the memory you are referencing (e.g., "Since you are an engineer...", "I know you prefer dark mode..."). This shows you remember them.
+
+Examples of correct behavior:
+User: "I've read that one already."
+Assistant: "Got it! Since you've already read that, here are 3 more books you might enjoy: [Book A], [Book B], [Book C]."
+
+User: "That's too formal for me."
+Assistant: "Understood! Here is a less formal version: [New Draft content]."`;
+
+    // Prepend system instruction to the first message in history or current message
+    if (historyArray.length > 0) {
+      historyArray[0].parts[0].text = systemInstruction + "\n\n" + historyArray[0].parts[0].text;
+    }
+
+    // Create chat session
+    const chat = ai.chats.create({
       model: 'gemini-2.5-flash',
-      contents: prompt
+      history: historyArray
+    });
+
+    // Send the current message (prepend if no history)
+    let finalMessage = message;
+    if (historyArray.length === 0) {
+      finalMessage = systemInstruction + "\n\n" + message;
+    }
+
+    const chatResult = await chat.sendMessage({
+      message: finalMessage
     });
     const aiResponse = chatResult.text;
 
@@ -99,8 +164,9 @@ app.post('/api/chat', async (req, res) => {
       [conversationId, 'ai', aiResponse]
     );
 
-    // BACKGROUND: Trigger Memory Extraction Pipeline
-    extractMemoriesAsync(message, userId, userMessageId).catch(console.error);
+    // Trigger Memory Extraction Pipeline in the background
+    extractMemoriesAsync(message, userId, userMessageId, lastAiMessage)
+      .catch(err => console.error("Error in background extraction:", err));
 
     res.json({
       userId,
@@ -115,15 +181,20 @@ app.post('/api/chat', async (req, res) => {
 });
 
 // MEMORY EXTRACTION LOGIC
-async function extractMemoriesAsync(userMessage, userId, messageId) {
-  const extractionPrompt = `
-    Analyze the following user message. We are building a memory profile for this user.
-    Extract ANY explicit facts (Facts), preferences (Pref), or implicit behavioral traits/styles (Implicit).
+async function extractMemoriesAsync(userMessage, userId, messageId, context = null) {
+  let prompt = `Analyze the following user message. We are building a memory profile for this user.`;
+  if (context) {
+    prompt += `\nContext (Previous AI Message): "${context}"`;
+  }
+  prompt += `\nUser Message: "${userMessage}"
+    
+    Extract ANY explicit facts (Facts), preferences (Pref), or implicit behavioral traits/styles (Implicit) about the user themselves.
+    CRITICAL: Do NOT extract memories about the user asking you questions, asking for a summary of themselves, asking what you remember, or testing your memory. Only extract facts about the user's life, preferences, and traits. For example, ignore "User asked for a summary" or "User is asking if I remember their dog".
     Return the result as a raw JSON array of objects (NO Markdown blocks, just the JSON array).
     Format: [{"content": "string fact/sentence", "type": "FACT|PREF|IMPLICIT", "category": "General|Travel|Hobby|Persona"}]
-    If nothing is found, return [].
-    Message: "${userMessage}"
-    `;
+    If nothing is found, return [].`;
+
+  const extractionPrompt = prompt;
 
   const result = await ai.models.generateContent({
     model: 'gemini-2.5-flash',
@@ -136,9 +207,10 @@ async function extractMemoriesAsync(userMessage, userId, messageId) {
     extracted = JSON.parse(rawJson);
   } catch (e) {
     console.warn("Could not parse extracted JSON:", rawJson);
-    return;
+    return [];
   }
 
+  const addedIds = [];
   if (Array.isArray(extracted) && extracted.length > 0) {
     // Compute embeddings and save each to the DB
     for (const memory of extracted) {
@@ -149,14 +221,29 @@ async function extractMemoriesAsync(userMessage, userId, messageId) {
       });
       const vectorData = `[${embedRes.embeddings[0].values.join(',')}]`;
 
-      await pool.query(
+      // Check for duplicates (semantic similarity > 0.85)
+      const duplicateCheck = await pool.query(
+        `SELECT content FROM memories 
+         WHERE user_id = $1 AND 1 - (embedding <=> $2::vector) > 0.85
+         LIMIT 1`,
+        [userId, vectorData]
+      );
+
+      if (duplicateCheck.rows.length > 0) {
+        console.log(`Skipping duplicate memory: "${memory.content}" (Matches existing: "${duplicateCheck.rows[0].content}")`);
+        continue;
+      }
+
+      const insertResult = await pool.query(
         `INSERT INTO memories (user_id, content, memory_type, category, embedding, source_message_id)
-                 VALUES ($1, $2, $3, $4, $5, $6)`,
+                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
         [userId, memory.content, memory.type.toUpperCase(), memory.category, vectorData, messageId]
       );
+      addedIds.push(insertResult.rows[0].id);
       console.log(`Saved new memory: ${memory.content}`);
     }
   }
+  return addedIds;
 }
 
 // 2. FETCH ALL MEMORIES ENDPOINT (For the 2D Visualization)
@@ -217,7 +304,7 @@ app.get('/api/memories', async (req, res) => {
         name: row.content,
         type: row.memory_type,
         category: row.category,
-        size: 10 + (count * 4) // dynamic sizing based on connections
+        size: 6 + (count * 2) // dynamic sizing based on connections
       };
     });
 
@@ -242,10 +329,87 @@ function cosineSimilarity(A, B) {
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
+// Persona Pool for quick access
+let personaPool = [];
+
+async function generatePersonaPool() {
+  console.log("Generating persona pool of 10 items...");
+  try {
+    const prompt = `Generate a list of 10 distinct synthetic personas for a user of an AI assistant. 
+    For each, provide a Name (e.g. 'Elena - The Busy Exec' or 'David - The Tech Bro') and a detailed paragraph written in the first person (e.g. starting with "Hi, I'm [Name]...") introducing themselves with at least 15-20 distinct facts (hobbies, preferences, background, habits).
+    Return the result as JSON matching the schema.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              description: { type: 'string' }
+            },
+            required: ['name', 'description']
+          }
+        }
+      }
+    });
+
+    personaPool = JSON.parse(response.text.trim());
+    console.log(`Generated ${personaPool.length} personas for the pool.`);
+    return personaPool;
+  } catch (err) {
+    console.error("Error generating persona pool:", err);
+  }
+}
+
+// GENERATE A SYNTHETIC PERSONA
+app.get('/api/generate-persona', async (req, res) => {
+  // Use pool if available
+  if (personaPool.length > 0) {
+    console.log("Serving persona from pool. Remaining:", personaPool.length - 1);
+    return res.json(personaPool.pop());
+  }
+
+  // Fallback if pool is empty
+  console.log("Pool empty, generating persona on the fly...");
+  try {
+    const prompt = `Generate a synthetic persona for a user of an AI assistant. 
+    Provide a Name (e.g. 'Elena - The Busy Exec' or 'David - The Tech Bro') and a detailed paragraph written in the first person (e.g. starting with "Hi, I'm [Name]...") introducing themselves with at least 15-20 distinct facts.
+    Return the result as JSON matching the schema.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            description: { type: 'string' }
+          },
+          required: ['name', 'description']
+        }
+      }
+    });
+
+    const data = JSON.parse(response.text.trim());
+    res.json(data);
+  } catch (err) {
+    console.error("Error generating persona:", err);
+    res.status(500).json({ error: "Failed to generate persona" });
+  }
+});
+
 // CREATE A NEW USER
 app.post('/api/users', async (req, res) => {
   try {
-    const { persona_name } = req.body;
+    console.log("POST /api/users req.body:", req.body);
+    const { persona_name } = req.body || {};
     if (!persona_name) return res.status(400).json({ error: "Missing persona_name" });
 
     const result = await pool.query(
@@ -377,6 +541,34 @@ app.post('/api/seed', async (req, res) => {
   }
 });
 
-app.listen(port, () => {
-  console.log(`Living Memory Demo Backend listening at http://localhost:${port}`);
+// RESET DATABASE (Clear and Reseed)
+app.post('/api/reset', async (req, res) => {
+  console.log("POST /api/reset received");
+  console.log("Reset requested. Running seed.js...");
+  exec('node seed.js', (error, stdout, stderr) => {
+    if (error) {
+      console.error(`exec error: ${error}`);
+      return res.status(500).json({ error: "Reset failed", details: stderr });
+    }
+    console.log(`stdout: ${stdout}`);
+    console.error(`stderr: ${stderr}`);
+    res.json({ message: "Reset successful", log: stdout });
+    // Refill pool after reset
+    generatePersonaPool();
+  });
 });
+
+if (require.main === module) {
+  app.listen(port, () => {
+    console.log(`Living Memory Demo Backend listening at http://localhost:${port}`);
+    // Fill pool on start
+    generatePersonaPool();
+  });
+}
+
+module.exports = {
+  extractMemoriesAsync,
+  generatePersonaPool,
+  pool,
+  ai
+};

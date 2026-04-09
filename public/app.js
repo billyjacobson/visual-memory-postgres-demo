@@ -9,6 +9,28 @@ const newChatBtn = document.getElementById('new-chat-btn');
 let currentUserId = null;
 let currentConvId = null;
 
+function setSession(userId, convId) {
+  currentUserId = userId;
+  currentConvId = convId;
+  if (userId) localStorage.setItem('currentUserId', userId);
+  else localStorage.removeItem('currentUserId');
+  if (convId) localStorage.setItem('currentConvId', convId);
+  else localStorage.removeItem('currentConvId');
+}
+
+const SUGGESTED_PROMPTS = [
+  { label: "Summary", prompt: "Give me a summary of myself" },
+  { label: "Restaurants", prompt: "Recommend 3 restaurants." },
+  { label: "Email Reply", prompt: "Write an email reply in my voice to a request for a meeting" },
+  { label: "Plan Vacation", prompt: "Help me plan a vacation." },
+  { label: "What you know", prompt: "What are all the things I told you?" },
+  { label: "Gift Ideas", prompt: "Suggest some gift ideas for me." },
+  { label: "Workout Plan", prompt: "Create a workout plan for me" },
+  { label: "Book Recommendation", prompt: "Recommend a book I might like" },
+  { label: "Career Advice", prompt: "Give me some career advice based." },
+  { label: "Daily Routine", prompt: "Suggest a daily routine." }
+];
+
 // Initialize 2D Graph matching the python reference visualization
 const graphElem = document.getElementById('graph-3d');
 const Graph = ForceGraph()
@@ -35,13 +57,23 @@ const Graph = ForceGraph()
     ctx.fillStyle = color;
     ctx.fill();
 
+    // Draw continuous glow if node is new
+    if (node.isNew) {
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, size + 6, 0, 2 * Math.PI, false);
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.4;
+      ctx.fill();
+      ctx.globalAlpha = 1.0;
+    }
+
     // Draw green circle around node if highlighted
     if (node.highlighted) {
       ctx.beginPath();
       // Make the green circle a bit larger than the node
       ctx.arc(node.x, node.y, size + 3, 0, 2 * Math.PI, false);
       ctx.strokeStyle = '#22c55e'; // Green
-      ctx.lineWidth = 2.5 / globalScale; // Thinner stroke when zoomed out
+      ctx.lineWidth = 6 / globalScale; // Thinner stroke for better balance when zoomed out
       ctx.stroke();
     }
 
@@ -106,13 +138,26 @@ const Graph = ForceGraph()
   })
   .linkCanvasObjectMode(() => 'replace')
   .linkCanvasObject((link, ctx) => {
-    // Draw edges manually to control opacity based on thickness (value)
-    const opacity = Math.min(0.4, (link.value / 25));
+    const links = Graph.graphData().links;
+    // Find max similarity in current data safely
+    const maxSim = links.reduce((max, l) => Math.max(max, l.similarity || 0.7), 0.7);
+    const minSim = 0.70; // Threshold from backend
+    
+    const sim = link.similarity || 0.7;
+    // Fallback if maxSim is too low to ensure variation
+    const targetMax = Math.max(0.75, maxSim); 
+    const normalized = Math.max(0, Math.min(1, (sim - minSim) / (targetMax - minSim)));
+    
+    // Exponential scale for line width (1px to 40px)
+    const lineWidth = 1 + Math.pow(normalized, 4) * 39; 
+    // Exponential scale for opacity
+    const opacity = 0.05 + Math.pow(normalized, 2) * 0.75; 
+    
     ctx.beginPath();
     ctx.moveTo(link.source.x, link.source.y);
     ctx.lineTo(link.target.x, link.target.y);
     ctx.strokeStyle = `rgba(255, 255, 255, ${opacity})`;
-    ctx.lineWidth = link.value || 1;
+    ctx.lineWidth = lineWidth;
     ctx.stroke();
   })
   .onNodeHover(node => {
@@ -126,14 +171,17 @@ const Graph = ForceGraph()
   });
 
 // Match Barnes-Hut mechanics from the Python Notebook
-Graph.d3Force('charge').strength(-800); // Increased repulsion to spread nodes out
-Graph.d3Force('link').distance(150);     // Longer springs for more spacious clusters
+Graph.d3Force('charge').strength(-800); // Initial repulsion
+Graph.d3Force('link').distance(80);      // Tighter spacing for connected nodes
 
 // Add explicit collision force to prevent nodes from overlapping
 Graph.d3Force('collide', d3.forceCollide(node => (node.size || 8) + 40).iterations(3));
 
 // Central gravity keeps the whole graph centered
-Graph.d3Force('center').strength(0.05);
+Graph.d3Force('center').strength(0.3); // Stronger gravity to pull unconnected nodes in
+
+// Add radial force to keep unconnected nodes from straying too far
+Graph.d3Force('radial', d3.forceRadial(0).strength(0.05));
 
 // Keep graph rendering bounds strictly within its visible container
 window.addEventListener('resize', () => {
@@ -151,7 +199,7 @@ function getColorForType(type) {
 }
 
 // Fetch Memories from Backend
-async function refreshBrain() {
+async function refreshBrain(shouldCenter = false) {
   if (!currentUserId) {
     Graph.graphData({ nodes: [], links: [] });
     return;
@@ -160,17 +208,40 @@ async function refreshBrain() {
   try {
     const res = await fetch(`/api/memories?userId=${currentUserId}`);
     const data = await res.json();
-    Graph.graphData(data);
-    setTimeout(() => {
-      // Center on the visual cluster (center of mass) instead of strict bounding box
-      const nodes = Graph.graphData().nodes;
-      if (nodes.length > 0) {
-        const sumX = nodes.reduce((sum, n) => sum + (n.x || 0), 0);
-        const sumY = nodes.reduce((sum, n) => sum + (n.y || 0), 0);
-        Graph.centerAt(sumX / nodes.length, sumY / nodes.length, 1000);
+    
+    const currentData = Graph.graphData();
+    const nodeMap = new Map(currentData.nodes.map(n => [n.id, n]));
+    
+    data.nodes = data.nodes.map(node => {
+      const existing = nodeMap.get(node.id);
+      if (existing) {
+        // Preserve coordinates and velocities to prevent jumping
+        node.x = existing.x;
+        node.y = existing.y;
+        node.vx = existing.vx;
+        node.vy = existing.vy;
+        node.isNew = existing.isNew;
       }
-      Graph.zoom(0.6, 1000); // 0.6 God-view zoom out
-    }, 1000);
+      if (window.newMemoryIds && window.newMemoryIds.includes(node.id)) {
+        node.isNew = true;
+      }
+      return node;
+    });
+    
+    Graph.graphData(data);
+    
+    if (shouldCenter) {
+      setTimeout(() => {
+        // Center on the visual cluster (center of mass) instead of strict bounding box
+        const nodes = Graph.graphData().nodes;
+        if (nodes.length > 0) {
+          const sumX = nodes.reduce((sum, n) => sum + (n.x || 0), 0);
+          const sumY = nodes.reduce((sum, n) => sum + (n.y || 0), 0);
+          Graph.centerAt(sumX / nodes.length, sumY / nodes.length, 1000);
+        }
+        Graph.zoom(0.9, 1000); // Zoomed in closer based on user feedback
+      }, 1000);
+    }
   } catch (err) {
     console.error("Failed to load brain data:", err);
   }
@@ -203,6 +274,24 @@ async function loadUsers(autoSelectId = null) {
     console.error("Error loading users:", err);
     return [];
   }
+}
+
+// Poll Brain for new memories
+function pollBrain(maxTries = 10, interval = 2000) {
+  let tries = 0;
+  console.log(`Starting polling...`);
+  
+  const poll = setInterval(async () => {
+    tries++;
+    await refreshBrain();
+    
+    if (tries >= maxTries) {
+      clearInterval(poll);
+      const extractInd = document.getElementById('extraction-indicator');
+      if (extractInd) extractInd.style.display = 'none';
+      console.log(`Polling stopped after ${tries} tries.`);
+    }
+  }, interval);
 }
 
 // Load Conversations for User
@@ -262,8 +351,8 @@ async function loadMessages(convId) {
 
 // Handlers
 async function handleUserSwitch() {
-  currentUserId = userSelect.value || null;
-  refreshBrain();
+  setSession(userSelect.value || null, null);
+  refreshBrain(true);
   if (currentUserId) {
     await loadConversations(currentUserId);
   } else {
@@ -271,58 +360,145 @@ async function handleUserSwitch() {
     currentConvId = null;
     chatWindow.innerHTML = '';
   }
+  renderQuickPrompts();
 }
 
 async function handleConvSwitch() {
-  currentConvId = convSelect.value || null;
+  setSession(currentUserId, convSelect.value || null);
   await loadMessages(currentConvId);
 }
 
 userSelect.addEventListener('change', handleUserSwitch);
 convSelect.addEventListener('change', handleConvSwitch);
 
-createUserBtn.addEventListener('click', () => {
-  document.getElementById('user-modal').style.display = 'flex';
-  document.getElementById('new-user-input').focus();
+// Reset Button
+const resetBtn = document.getElementById('reset-btn');
+if (resetBtn) {
+  resetBtn.addEventListener('click', function(e) {
+    e.preventDefault();
+    if (!confirm("Are you sure you want to clear all data and reseed?")) return;
+    
+    (async () => {
+      try {
+        resetBtn.textContent = "Resetting...";
+        const res = await fetch('/api/reset', { method: 'POST' });
+        const data = await res.json();
+        console.log("Reset result:", data);
+        alert("Database reset successful!");
+        await loadUsers();
+        resetBtn.textContent = "Reset Data";
+      } catch (err) {
+        console.error("Reset failed:", err);
+        alert("Reset failed.");
+        resetBtn.textContent = "Reset Data";
+      }
+    })();
+  });
+}
+
+// Repulsion Slider
+const repulsionSlider = document.getElementById('repulsion-slider');
+if (repulsionSlider) {
+  repulsionSlider.addEventListener('input', (e) => {
+    const val = parseInt(e.target.value);
+    Graph.d3Force('charge').strength(-val); // Invert value so larger slider means more distance
+    Graph.d3ReheatSimulation();
+  });
+}
+
+// Quick Prompts
+function renderQuickPrompts() {
+  const container = document.getElementById('quick-prompts');
+  if (!container) return;
+  
+  container.innerHTML = '';
+  
+  // Always include Summary
+  const summaryPrompt = SUGGESTED_PROMPTS.find(p => p.label === "Summary");
+  const otherPrompts = SUGGESTED_PROMPTS.filter(p => p.label !== "Summary");
+  
+  // Pick 3 random prompts from the rest
+  const shuffled = otherPrompts.sort(() => 0.5 - Math.random());
+  const selected = [summaryPrompt, ...shuffled.slice(0, 3)];
+  
+  selected.forEach(p => {
+    const btn = document.createElement('button');
+    btn.className = 'secondary-btn quick-prompt-btn';
+    btn.dataset.prompt = p.prompt;
+    btn.textContent = p.label;
+    container.appendChild(btn);
+  });
+}
+
+// Event Delegation for Quick Prompts
+const quickPromptsContainer = document.getElementById('quick-prompts');
+if (quickPromptsContainer) {
+  quickPromptsContainer.addEventListener('click', (e) => {
+    const btn = e.target.closest('.quick-prompt-btn');
+    if (btn) {
+      chatInput.value = btn.dataset.prompt;
+      chatForm.dispatchEvent(new Event('submit'));
+    }
+  });
+}
+// New User Button Flow
+const userModal = document.getElementById('user-modal');
+const newUserInput = document.getElementById('new-user-input');
+const newUserDesc = document.getElementById('new-user-desc');
+
+createUserBtn.addEventListener('click', async () => {
+  // Show modal
+  userModal.style.display = 'flex';
+  newUserInput.value = "Generating name...";
+  newUserDesc.value = "Generating comprehensive description (15-20 facts)...";
+  
+  try {
+    const res = await fetch('/api/generate-persona');
+    const data = await res.json();
+    
+    newUserInput.value = data.name;
+    newUserDesc.value = data.description;
+  } catch (err) {
+    console.error("Failed to generate persona:", err);
+    newUserInput.value = "Error generating name";
+    newUserDesc.value = "Error generating description";
+  }
 });
 
 document.getElementById('cancel-user-btn').addEventListener('click', () => {
-  document.getElementById('user-modal').style.display = 'none';
-  document.getElementById('new-user-input').value = '';
+  userModal.style.display = 'none';
 });
 
 document.getElementById('submit-user-btn').addEventListener('click', async () => {
-  const nameInput = document.getElementById('new-user-input');
-  const name = nameInput.value;
-  if (!name || !name.trim()) return;
-
+  const name = newUserInput.value;
+  const desc = newUserDesc.value;
+  
+  if (!name || !name.trim() || !desc || !desc.trim()) {
+    alert("Please fill in both name and description.");
+    return;
+  }
+  
   try {
+    // 1. Create User
     const res = await fetch('/api/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ persona_name: name.trim() })
     });
     const newUser = await res.json();
-
-    // Reload the users dropdown softly
-    const usersRes = await fetch('/api/users');
-    const users = await usersRes.json();
-    userSelect.innerHTML = '<option value="">Select User...</option>';
-    users.forEach(u => {
-      const option = document.createElement('option');
-      option.value = u.id;
-      option.textContent = u.persona_name;
-      userSelect.appendChild(option);
-    });
-
-    // Clean up modal
-    document.getElementById('user-modal').style.display = 'none';
-    nameInput.value = '';
-
-    // Select the new user and trigger the hard load to clear chat/convs
-    userSelect.value = newUser.id;
-    await handleUserSwitch();
-
+    
+    // 2. Reload users dropdown and select new user
+    await loadUsers(newUser.id);
+    
+    // 3. Close modal
+    userModal.style.display = 'none';
+    
+    // 4. Put text in input and submit after a short delay
+    setTimeout(() => {
+      chatInput.value = desc.trim();
+      chatForm.dispatchEvent(new Event('submit'));
+    }, 500);
+    
   } catch (err) {
     console.error("Failed to create user:", err);
     alert("Failed to create user.");
@@ -338,24 +514,26 @@ newChatBtn.addEventListener('click', () => {
 // Seed Initial Data if Empty
 async function initApp() {
   const users = await loadUsers();
-  const hasDemoUser = users.some(u => u.persona_name === 'Demo User');
-
-  if (!hasDemoUser) {
-    console.log("Demo User not found. Auto-seeding Demo User...");
-    try {
-      const res = await fetch('/api/seed', { method: 'POST' });
-      const seedData = await res.json();
-      await loadUsers(seedData.userId);
-    } catch (err) {
-      console.error("Failed to seed database:", err);
+  
+  const savedUserId = localStorage.getItem('currentUserId');
+  const savedConvId = localStorage.getItem('currentConvId');
+  
+  if (savedUserId && users.some(u => u.id == savedUserId)) {
+    userSelect.value = savedUserId;
+    await handleUserSwitch();
+    
+    if (savedConvId) {
+      const convOption = Array.from(convSelect.options).find(o => o.value == savedConvId);
+      if (convOption) {
+        convSelect.value = savedConvId;
+        await handleConvSwitch();
+      }
     }
-  } else {
-    // If Demo User exists, let's select it by default for the demo
-    const demoUser = users.find(u => u.persona_name === 'Demo User');
-    if (demoUser && currentUserId !== demoUser.id) {
-      await loadUsers(demoUser.id);
-    }
+  } else if (users.length > 0) {
+    userSelect.value = users[0].id;
+    await handleUserSwitch();
   }
+  renderQuickPrompts();
 }
 
 // Handle Chat Submission
@@ -376,6 +554,10 @@ chatForm.addEventListener('submit', async (e) => {
   chatWindow.appendChild(typingIndicator);
   chatWindow.scrollTop = chatWindow.scrollHeight;
 
+  // Show extraction indicator
+  const extractInd = document.getElementById('extraction-indicator');
+  if (extractInd) extractInd.style.display = 'flex';
+
   try {
     // 2. Send to Backend
     const res = await fetch('/api/chat', {
@@ -390,6 +572,9 @@ chatForm.addEventListener('submit', async (e) => {
 
     const data = await res.json();
 
+    // Store new memory IDs for glowing effects
+    window.newMemoryIds = data.newMemoryIds || [];
+
     // Remove the typing indicator now that we have data
     const existingIndicator = document.getElementById('typing-indicator');
     if (existingIndicator) existingIndicator.remove();
@@ -399,8 +584,7 @@ chatForm.addEventListener('submit', async (e) => {
       const isNewUser = currentUserId !== data.userId;
       const isNewConv = currentConvId !== data.conversationId;
 
-      currentUserId = data.userId;
-      currentConvId = data.conversationId;
+      setSession(data.userId, data.conversationId);
 
       // Soft-reload dropdowns to visually update them WITHOUT triggering full reload cascades (which cause duplicate appends)
       if (isNewUser) {
@@ -437,8 +621,8 @@ chatForm.addEventListener('submit', async (e) => {
     // 4. Highlight Retrieved Memories in the 3D Graph
     highlightMemories(data.memoriesUsed);
 
-    // 5. Refresh the brain data in case NEW memories were extracted
-    setTimeout(() => refreshBrain(), 3000);
+    // 5. Start polling for new memories (since extraction is now async)
+    pollBrain(15, 2000);
 
   } catch (err) {
     const existingIndicator = document.getElementById('typing-indicator');
