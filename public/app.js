@@ -246,7 +246,8 @@ async function refreshBrain(shouldCenter = false) {
     if (prefElem) prefElem.textContent = counts.PREF;
     if (implicitElem) implicitElem.textContent = counts.IMPLICIT;
 
-    Graph.graphData(data);
+    window.rawGraphData = data;
+    updateGraphWithThreshold();
     
     if (shouldCenter) {
       setTimeout(() => {
@@ -421,6 +422,31 @@ if (repulsionSlider) {
     const val = parseInt(e.target.value);
     Graph.d3Force('charge').strength(-val); // Invert value so larger slider means more distance
     Graph.d3ReheatSimulation();
+  });
+}
+
+// Update graph based on similarity threshold
+function updateGraphWithThreshold() {
+  if (!window.rawGraphData) return;
+  
+  const slider = document.getElementById('threshold-slider');
+  const threshold = slider ? parseFloat(slider.value) : 0.70;
+  const valElem = document.getElementById('threshold-val');
+  if (valElem) valElem.textContent = threshold.toFixed(2);
+  
+  const filteredLinks = window.rawGraphData.links.filter(l => l.similarity >= threshold);
+  
+  Graph.graphData({
+    nodes: window.rawGraphData.nodes,
+    links: filteredLinks
+  });
+}
+
+// Threshold Slider
+const thresholdSlider = document.getElementById('threshold-slider');
+if (thresholdSlider) {
+  thresholdSlider.addEventListener('input', () => {
+    updateGraphWithThreshold();
   });
 }
 

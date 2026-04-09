@@ -278,21 +278,19 @@ app.get('/api/memories', async (req, res) => {
       `, [row.vector, row.id, userId]);
 
       for (const neighbor of neighborsQuery.rows) {
-        if (neighbor.similarity > 0.70) {
-          // Sort IDs so a->b and b->a are the same edge key
-          const edgeKeyPair = [row.id, neighbor.id].sort((a, b) => a - b).join('-');
+        // Sort IDs so a->b and b->a are the same edge key
+        const edgeKeyPair = [row.id, neighbor.id].sort((a, b) => a - b).join('-');
 
-          if (!uniqueEdges[edgeKeyPair]) {
-            const thickness = Math.pow(neighbor.similarity, 3) * 50;
-            uniqueEdges[edgeKeyPair] = {
-              source: row.id,
-              target: neighbor.id,
-              value: thickness,
-              similarity: neighbor.similarity
-            };
-            nodeConnectionCount[row.id] += 1;
-            nodeConnectionCount[neighbor.id] += 1;
-          }
+        if (!uniqueEdges[edgeKeyPair]) {
+          const thickness = Math.pow(neighbor.similarity, 3) * 50;
+          uniqueEdges[edgeKeyPair] = {
+            source: row.id,
+            target: neighbor.id,
+            value: thickness,
+            similarity: neighbor.similarity
+          };
+          nodeConnectionCount[row.id] += 1;
+          nodeConnectionCount[neighbor.id] += 1;
         }
       }
     }
