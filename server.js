@@ -2,6 +2,8 @@ const express = require('express');
 const { Pool } = require('pg');
 const { GoogleGenAI } = require('@google/genai');
 const { exec } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -72,11 +74,11 @@ app.post('/api/chat', async (req, res) => {
     // Format embedding as pgvector string: '[x, y, z...]'
     const embeddingStr = `[${promptEmbedding.join(',')}]`;
 
-    // Query DB for memories within a threshold (similarity > 0.3) with a max limit of 20
+    // Query DB for memories within a threshold (similarity > 0.4) with a max limit of 20
     const relevantMemories = await pool.query(
       `SELECT id, content, memory_type, category 
        FROM memories 
-       WHERE user_id = $1 AND 1 - (embedding <=> $2::vector) > 0.3
+       WHERE user_id = $1 AND 1 - (embedding <=> $2::vector) > 0.4
        ORDER BY embedding <=> $2::vector 
        LIMIT 20`,
       [userId, embeddingStr]
@@ -332,7 +334,20 @@ function cosineSimilarity(A, B) {
 // Persona Pool for quick access
 let personaPool = [];
 
+const PERSONAS_FILE = path.join(__dirname, 'personas.json');
+
 async function generatePersonaPool() {
+  if (fs.existsSync(PERSONAS_FILE)) {
+    console.log("Loading persona pool from file...");
+    try {
+      personaPool = JSON.parse(fs.readFileSync(PERSONAS_FILE, 'utf8'));
+      console.log(`Loaded ${personaPool.length} personas from file.`);
+      return personaPool;
+    } catch (e) {
+      console.error("Error reading personas.json, will generate new ones:", e);
+    }
+  }
+
   console.log("Generating persona pool of 10 items...");
   try {
     const prompt = `Generate a list of 10 distinct synthetic personas for a user of an AI assistant. 
@@ -360,6 +375,15 @@ async function generatePersonaPool() {
 
     personaPool = JSON.parse(response.text.trim());
     console.log(`Generated ${personaPool.length} personas for the pool.`);
+
+    // Save to file so we don't have to generate again
+    try {
+      fs.writeFileSync(PERSONAS_FILE, JSON.stringify(personaPool, null, 2));
+      console.log("Saved personas to personas.json");
+    } catch (e) {
+      console.error("Error saving personas to file:", e);
+    }
+
     return personaPool;
   } catch (err) {
     console.error("Error generating persona pool:", err);
@@ -368,37 +392,34 @@ async function generatePersonaPool() {
 
 // GENERATE A SYNTHETIC PERSONA
 app.get('/api/generate-persona', async (req, res) => {
-  // Use pool if available
-  if (personaPool.length > 0) {
-    console.log("Serving persona from pool. Remaining:", personaPool.length - 1);
-    return res.json(personaPool.pop());
-  }
-
-  // Fallback if pool is empty
-  console.log("Pool empty, generating persona on the fly...");
   try {
-    const prompt = `Generate a synthetic persona for a user of an AI assistant. 
-    Provide a Name (e.g. 'Elena - The Busy Exec' or 'David - The Tech Bro') and a detailed paragraph written in the first person (e.g. starting with "Hi, I'm [Name]...") introducing themselves with at least 15-20 distinct facts.
-    Return the result as JSON matching the schema.`;
+    // 1. Load personas from file
+    let personas = [];
+    if (fs.existsSync(PERSONAS_FILE)) {
+      personas = JSON.parse(fs.readFileSync(PERSONAS_FILE, 'utf8'));
+    } else {
+      personas = await generatePersonaPool();
+    }
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: 'object',
-          properties: {
-            name: { type: 'string' },
-            description: { type: 'string' }
-          },
-          required: ['name', 'description']
-        }
-      }
+    // 2. Get existing users from DB
+    const existingUsersResult = await pool.query(`SELECT persona_name FROM users`);
+    const existingNames = existingUsersResult.rows.map(r => r.persona_name);
+
+    // 3. Find an unused persona
+    const unusedPersona = personas.find(p => !existingNames.includes(p.name));
+
+    if (unusedPersona) {
+      console.log(`Serving persona from file: ${unusedPersona.name}`);
+      return res.json(unusedPersona);
+    }
+
+    // 4. If all used
+    console.log("All personas from file are already in use.");
+    return res.status(400).json({
+      error: "All 10 personas have been used. Please reset the database to start over.",
+      allUsed: true 
     });
 
-    const data = JSON.parse(response.text.trim());
-    res.json(data);
   } catch (err) {
     console.error("Error generating persona:", err);
     res.status(500).json({ error: "Failed to generate persona" });
@@ -553,16 +574,12 @@ app.post('/api/reset', async (req, res) => {
     console.log(`stdout: ${stdout}`);
     console.error(`stderr: ${stderr}`);
     res.json({ message: "Reset successful", log: stdout });
-    // Refill pool after reset
-    generatePersonaPool();
   });
 });
 
 if (require.main === module) {
   app.listen(port, () => {
     console.log(`Living Memory Demo Backend listening at http://localhost:${port}`);
-    // Fill pool on start
-    generatePersonaPool();
   });
 }
 

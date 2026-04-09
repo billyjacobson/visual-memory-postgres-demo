@@ -13,7 +13,7 @@ async function seedDatabase() {
     console.log("Database wiped perfectly. Starting seed process...");
 
     const personas = await generatePersonaPool();
-    const selectedPersonas = personas.slice(0, 3);
+    const selectedPersonas = personas.slice(0, 2);
 
     for (const persona of selectedPersonas) {
       console.log(`\nCreating User: ${persona.name}...`);

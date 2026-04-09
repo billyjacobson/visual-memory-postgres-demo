@@ -20,14 +20,10 @@ function setSession(userId, convId) {
 
 const SUGGESTED_PROMPTS = [
   { label: "Summary", prompt: "Give me a summary of myself" },
-  { label: "Restaurants", prompt: "Recommend 3 restaurants." },
-  { label: "Email Reply", prompt: "Write an email reply in my voice to a request for a meeting" },
-  { label: "Plan Vacation", prompt: "Help me plan a vacation." },
+  { label: "Restaurants", prompt: "Recommend 3 restaurants in Vegas." },
   { label: "What you know", prompt: "What are all the things I told you?" },
-  { label: "Gift Ideas", prompt: "Suggest some gift ideas for me." },
-  { label: "Workout Plan", prompt: "Create a workout plan for me" },
+  { label: "Gift Ideas", prompt: "Suggest some gift idea I can get while in Vegas." },
   { label: "Book Recommendation", prompt: "Recommend a book I might like" },
-  { label: "Career Advice", prompt: "Give me some career advice based." },
   { label: "Daily Routine", prompt: "Suggest a daily routine." }
 ];
 
@@ -210,6 +206,12 @@ async function refreshBrain(shouldCenter = false) {
     const data = await res.json();
     
     const currentData = Graph.graphData();
+
+    // Skip update if number of nodes hasn't changed (prevents redundant redraws during polling)
+    if (!shouldCenter && currentData.nodes && data.nodes.length === currentData.nodes.length) {
+      return;
+    }
+
     const nodeMap = new Map(currentData.nodes.map(n => [n.id, n]));
     
     data.nodes = data.nodes.map(node => {
@@ -228,6 +230,22 @@ async function refreshBrain(shouldCenter = false) {
       return node;
     });
     
+    // Update counts in legend
+    const counts = { FACT: 0, PREF: 0, IMPLICIT: 0 };
+    data.nodes.forEach(node => {
+      if (counts[node.type] !== undefined) {
+        counts[node.type]++;
+      }
+    });
+
+    const factElem = document.getElementById('count-fact');
+    const prefElem = document.getElementById('count-pref');
+    const implicitElem = document.getElementById('count-implicit');
+
+    if (factElem) factElem.textContent = counts.FACT;
+    if (prefElem) prefElem.textContent = counts.PREF;
+    if (implicitElem) implicitElem.textContent = counts.IMPLICIT;
+
     Graph.graphData(data);
     
     if (shouldCenter) {
