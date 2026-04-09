@@ -6,7 +6,6 @@ It features:
 - **Persistent Multi-User Memory Tracking**: Extract facts, preferences, and traits using Gemini in real-time.
 - **pgvector Integration**: Fast nearest-neighbour search for context retrieval.
 - **3D Living Graph Visualization**: View memories visually in a web interface.
-- **Model Context Protocol (MCP)**: Run read-only analytics queries via external tools.
 
 ---
 
@@ -15,7 +14,6 @@ It features:
 Before you begin, ensure you have the following installed:
 1. **Node.js**: (v18+ recommended)
 2. **PostgreSQL** with the **pgvector** extension.
-3. **Gemini API Key**: You can get one from [Google AI Studio](https://aistudio.google.com/).
 4. **Google Cloud SDK (gcloud)**: Only if you are deploying to Google Cloud SQL.
 
 ---
@@ -37,21 +35,10 @@ npm install
 
 ### 3. Set up Environment Variables
 
-Copy the `.env.example` file to create your own configuration:
+You don't need to change the environment variables or copy it, you can just source the file so it is in your environment:
 
 ```bash
-cp .env.example .env
-```
-
-Open `.env` and configure the following:
-```env
-DB_HOST=127.0.0.1
-DB_PORT=5432
-DB_USER=your_db_user
-DB_PASS=your_db_password
-DB_NAME=living_memory # or your preferred name
-
-GEMINI_API_KEY=your_gemini_api_key_here
+source .env.example
 ```
 
 ---
