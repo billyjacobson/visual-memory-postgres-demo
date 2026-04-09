@@ -80,7 +80,7 @@ app.post('/api/chat', async (req, res) => {
        FROM memories 
        WHERE user_id = $1 AND 1 - (embedding <=> $2::vector) > 0.4
        ORDER BY embedding <=> $2::vector 
-       LIMIT 20`,
+       LIMIT 12`,
       [userId, embeddingStr]
     );
 
