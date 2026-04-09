@@ -110,22 +110,6 @@ In the frontend, you can converse with the AI and watch the memory cortex graph 
 
 ---
 
-## 🧩 Model Context Protocol (MCP)
-
-This project includes a built-in MCP server for read-only database interactions:
-
-- **Server Location**: `mcp-server.js`
-- **Capabilities**: Run read-only `SELECT` queries across users, memories, and conversations.
-
-You can register this script in your favourite MCP Desktop client (Cursor, Claude Desktop, etc.) to query stats or analyze schema.
-
-Example tool usage:
-```sql
-SELECT category, count(*) FROM memories GROUP BY category ORDER BY count(*) DESC;
-```
-
----
-
 
 ## Debugging issues
 
